@@ -14,23 +14,23 @@ import simplus_scratch
 
 def run():
 
-    vapi = VrepApi()
-    sa = vapi.init_serverApi()
-    
-    is_started = False
-    while not is_started:
-        print("Please click on the play button")
-        is_started = sa.get_status(1)
-    # sa.startSimulation()
-    print("step1")
-    time.sleep(0.1)
-    with grpc.insecure_channel(
-            target='localhost:50051',
-            options=[('grpc.lb_policy_name', 'pick_first'),
-                     ('grpc.enable_retries', 0), ('grpc.keepalive_timeout_ms',
-                                                  10000)]) as channel:
+     vapi = VrepApi()
+     sa = vapi.init_serverApi()
+#     
+     is_started = False
+     while not is_started:
+         print("Please click on the play button")
+         is_started = sa.get_status(1)
+#     # sa.startSimulation()
+     print("step1")
+     time.sleep(0.1)
+     with grpc.insecure_channel(
+             target='localhost:50051',
+             options=[('grpc.lb_policy_name', 'pick_first'),
+                      ('grpc.enable_retries', 0), ('grpc.keepalive_timeout_ms',
+                                                   10000)]) as channel:
       stub = simplus_pb2_grpc.SimPlusStub(channel)
-      # Timeout in seconds.
+#       # Timeout in seconds.
       try:
         response = stub.Start(simplus_pb2.WorldInfo(team_size=2,
                                                     robot_per_team=2,
@@ -42,28 +42,37 @@ def run():
             
         print("Client Received: " + response.name)
         my_team_id = 0
-        r=sa.set_name(response.name)
+        r,game_duration=sa.set_name(response.name)
+        print("game_duration=",game_duration)
         if r is None:
             r=0
         my_team_id = max(r, my_team_id)
         ra = vapi.init_robotApi()
+        print("start precompute")
+        ra.precompute()
+        print("end precompute")
         st=simplus_scratch.ScratchThread(vapi,ra,sa)
         st.start()
         print("Start")
         team_score = 0
         team_name = response.name
-        for i in range(1000):
-            is_started = sa.get_status()
+        for i in range(game_duration):
+            #testtime=time.time_ns()
+            is_started = sa.get_status(isOneshot=True)
             while not is_started:
-                is_started = sa.get_status()
+                is_started = sa.get_status(isOneshot=True)
             a = time.process_time()
 
             image = ra.getCameraImage()
+            
             image_array = np.array(image[0], dtype=np.uint8)
 
             colors = [ra.getColorSensor(i) for i in range(3)]
+
             proxim = [ra.getProximitySensor(i) for i in range(8)]
+
             pos = ra.getRobotPose()
+
             response = stub.Action(
                 simplus_pb2.Observations(
                     server=simplus_pb2.ServerInfo(time=i, server_state='running', my_score=0, opp_score=1),
@@ -76,19 +85,23 @@ def run():
                     ) for i in range(1)]
                 )
             )
+
             for res in response.commands:
-                print('Robot ' + str(res.id) + ' Command: ' + str(res.linear) + ' ' + str(res.angular) + ' LED: ' + res.LED)
+#                 print('Robot ' + str(res.id) + ' Command: ' + str(res.linear) + ' ' + str(res.angular) + ' LED: ' + res.LED)
                 ra.setRobotSpeed(linear=res.linear, angular=res.angular)
                 ra.setLED(color=res.LED)
                 for action in res.actions:
                     team_score += sa.callAction(action.type, action.x, action.y, action.z)
-            team_score += ra.checkAllTraps()
-            sa.set_score(my_team_id, str(team_score))
 
+            team_score += ra.checkAllTraps()
+
+            sa.set_score(my_team_id, str(team_score))
+            #print("dif time =",1000000000/(time.time_ns()-testtime))
+            #testtime=time.time_ns()
         response = stub.End(
             simplus_pb2.Ending(server=simplus_pb2.ServerInfo(time=i, server_state='running', my_score=0, opp_score=1)))
         print('END IS: ' + response.message)
-      except:
+      except Exception as err:
           print("Waiting for Scratch")
           print("Client Received: " + "my_team_name")
           my_team_id = 0
